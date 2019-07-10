@@ -4,22 +4,15 @@
 #include "pch.h"
 #include "AppHost.h"
 #include "../types/inc/Viewport.hpp"
+#include "../types/inc/utils.hpp"
 
 using namespace winrt::Windows::UI;
 using namespace winrt::Windows::UI::Composition;
 using namespace winrt::Windows::UI::Xaml;
 using namespace winrt::Windows::UI::Xaml::Hosting;
 using namespace winrt::Windows::Foundation::Numerics;
+using namespace ::Microsoft::Console;
 using namespace ::Microsoft::Console::Types;
-
-// The tabs are 34.8px tall. This is their default height - we're not
-// controlling the styling of the tabs at all currently. If we change the size
-// of those, we'll need to change the size here, too. We can't get this size
-// from the tab control until the control is added to a XAML element, and we
-// can't create any XAML elements until we have a window, and we need to know
-// this size before we can create a window, so unfortunately we're stuck
-// hardcoding this.
-const int NON_CLIENT_CONTENT_HEIGHT = static_cast<int>(std::round(34.8));
 
 AppHost::AppHost() noexcept :
     _app{},
@@ -30,9 +23,6 @@ AppHost::AppHost() noexcept :
     if (_useNonClientArea)
     {
         _window = std::make_unique<NonClientIslandWindow>();
-        auto pNcWindow = static_cast<NonClientIslandWindow*>(_window.get());
-
-        pNcWindow->SetNonClientHeight(NON_CLIENT_CONTENT_HEIGHT);
     }
     else
     {
@@ -51,6 +41,10 @@ AppHost::AppHost() noexcept :
 
 AppHost::~AppHost()
 {
+    // destruction order is important for proper teardown here
+    _window = nullptr;
+    _app.Close();
+    _app = nullptr;
 }
 
 // Method Description:
@@ -67,18 +61,15 @@ AppHost::~AppHost()
 void AppHost::Initialize()
 {
     _window->Initialize();
-    _app.Create();
+    const auto handle = _window->GetHandle();
+    _app.Create(reinterpret_cast<uint64_t>(handle));
 
     _app.TitleChanged({ this, &AppHost::AppTitleChanged });
+    _app.LastTabClosed({ this, &AppHost::LastTabClosed });
 
     AppTitleChanged(_app.GetTitle());
 
-    _window->SetRootContent(_app.GetRoot());
-    if (_useNonClientArea)
-    {
-        auto pNcWindow = static_cast<NonClientIslandWindow*>(_window.get());
-        pNcWindow->SetNonClientContent(_app.GetTabs());
-    }
+    _window->OnAppInitialized(_app);
 }
 
 // Method Description:
@@ -91,6 +82,17 @@ void AppHost::Initialize()
 void AppHost::AppTitleChanged(winrt::hstring newTitle)
 {
     _window->UpdateTitle(newTitle.c_str());
+}
+
+// Method Description:
+// - Called when no tab is remaining to close the window.
+// Arguments:
+// - <none>
+// Return Value:
+// - <none>
+void AppHost::LastTabClosed()
+{
+    _window->Close();
 }
 
 // Method Description:
@@ -120,12 +122,15 @@ void AppHost::_HandleCreateWindow(const HWND hwnd, const RECT proposedRect)
 
     auto initialSize = _app.GetLaunchDimensions(dpix);
 
-    const short _currentWidth = gsl::narrow<short>(ceil(initialSize.X));
-    const short _currentHeight = gsl::narrow<short>(ceil(initialSize.Y));
+    const short _currentWidth = Utils::ClampToShortMax(
+        static_cast<long>(ceil(initialSize.X)), 1);
+    const short _currentHeight = Utils::ClampToShortMax(
+        static_cast<long>(ceil(initialSize.Y)), 1);
 
     // Create a RECT from our requested client size
     auto nonClient = Viewport::FromDimensions({ _currentWidth,
-                                                _currentHeight }).ToRect();
+                                                _currentHeight })
+                         .ToRect();
 
     // Get the size of a window we'd need to host that client rect. This will
     // add the titlebar space.
@@ -151,22 +156,23 @@ void AppHost::_HandleCreateWindow(const HWND hwnd, const RECT proposedRect)
             // size of our window, which will be at least close.
             LOG_LAST_ERROR();
             nonClient = Viewport::FromDimensions({ _currentWidth,
-                                                   _currentHeight }).ToRect();
+                                                   _currentHeight })
+                            .ToRect();
         }
     }
-
 
     const auto adjustedHeight = nonClient.bottom - nonClient.top;
     const auto adjustedWidth = nonClient.right - nonClient.left;
 
     const COORD origin{ gsl::narrow<short>(proposedRect.left),
                         gsl::narrow<short>(proposedRect.top) };
-    const COORD dimensions{ gsl::narrow<short>(adjustedWidth),
-                            gsl::narrow<short>(adjustedHeight) };
+    const COORD dimensions{ Utils::ClampToShortMax(adjustedWidth, 1),
+                            Utils::ClampToShortMax(adjustedHeight, 1) };
 
     const auto newPos = Viewport::FromDimensions(origin, dimensions);
 
-    bool succeeded = SetWindowPos(hwnd, nullptr,
+    bool succeeded = SetWindowPos(hwnd,
+                                  nullptr,
                                   newPos.Left(),
                                   newPos.Top(),
                                   newPos.Width(),
@@ -176,6 +182,4 @@ void AppHost::_HandleCreateWindow(const HWND hwnd, const RECT proposedRect)
     // If we can't resize the window, that's really okay. We can just go on with
     // the originally proposed window size.
     LOG_LAST_ERROR_IF(!succeeded);
-
-
 }

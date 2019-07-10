@@ -13,34 +13,34 @@ public:
     virtual ~IslandWindow() override;
 
     void MakeWindow() noexcept;
+    void Close();
+    virtual void OnSize(const UINT width, const UINT height);
 
-    virtual void OnSize();
-
-    virtual LRESULT MessageHandler(UINT const message, WPARAM const wparam, LPARAM const lparam) noexcept override;
-    void ApplyCorrection(double scaleFactor);
-    void NewScale(UINT dpi) override;
+    [[nodiscard]] virtual LRESULT MessageHandler(UINT const message, WPARAM const wparam, LPARAM const lparam) noexcept override;
     void OnResize(const UINT width, const UINT height) override;
     void OnMinimize() override;
     void OnRestore() override;
-    void SetRootContent(winrt::Windows::UI::Xaml::UIElement content);
+    virtual void OnAppInitialized(winrt::TerminalApp::App app);
 
-    virtual void Initialize();
+    void Initialize();
 
     void SetCreateCallback(std::function<void(const HWND, const RECT)> pfn) noexcept;
 
 protected:
-    unsigned int _currentWidth;
-    unsigned int _currentHeight;
+    void ForceResize()
+    {
+        // Do a quick resize to force the island to paint
+        const auto size = GetPhysicalSize();
+        OnSize(size.cx, size.cy);
+    }
 
     HWND _interopWindowHandle;
 
     winrt::Windows::UI::Xaml::Hosting::DesktopWindowXamlSource _source;
 
-    winrt::Windows::UI::Xaml::Media::ScaleTransform _scale;
     winrt::Windows::UI::Xaml::Controls::Grid _rootGrid;
 
     std::function<void(const HWND, const RECT)> _pfnCreateCallback;
 
-    void _InitXamlContent();
     void _HandleCreateWindow(const WPARAM wParam, const LPARAM lParam) noexcept;
 };
